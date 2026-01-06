@@ -372,11 +372,11 @@ class WebSocketServer implements WebSocketInterface, MessageComponentInterface
      */
     protected function processMessage(ConnectionInterface $connection, object $data): void
     {
-        // Get message type from messageType or type field
-        $messageType = $data->messageType ?? $data->type ?? null;
         
         $this->handleCustomMessage($connection, $data);
         return;
+        // Get message type from messageType or type field
+        $messageType = $data->messageType ?? $data->type ?? null;
         // Route to appropriate handler based on messageType
         switch ($messageType) {
             case 'socket':
