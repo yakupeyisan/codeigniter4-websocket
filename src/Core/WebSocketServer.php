@@ -375,12 +375,8 @@ class WebSocketServer implements WebSocketInterface, MessageComponentInterface
         // Get message type from messageType or type field
         $messageType = $data->messageType ?? $data->type ?? null;
         
-        // If messageType is roomchat but room is not provided, use custom callback
-        if ($messageType === 'roomchat' && empty($data->room)) {
-            $this->handleCustomMessage($connection, $data);
-            return;
-        }
-        
+        $this->handleCustomMessage($connection, $data);
+        return;
         // Route to appropriate handler based on messageType
         switch ($messageType) {
             case 'socket':
@@ -694,13 +690,8 @@ class WebSocketServer implements WebSocketInterface, MessageComponentInterface
     protected function handleCustomMessage(ConnectionInterface $connection, object $data): void
     {
         if (isset($this->callbacks['custom'])) {
-            log_message('error','Test websocket custom callback');
             call_user_func($this->callbacks['custom'], $data, $connection);
         }
-        else{
-            log_message('error','Test websocket custom callback not found');
-        }
-        
     }
 
     /**
