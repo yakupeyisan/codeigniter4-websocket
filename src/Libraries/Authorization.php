@@ -24,15 +24,18 @@ class Authorization
     public static function validateTimestamp(string $token, string $key, int $timeout = 60)
     {
         $decoded = self::validateToken($token, $key);
-        
+
+        log_message('error','validateTimestamp: '.$token);
+        log_message('error','validateTimestamp: '.json_encode($decoded,JSON_UNESCAPED_UNICODE));
         if ($decoded === false) {
             return false;
         }
-        
+        log_message('error','validateTimestamp: '.$decoded->timestamp);
         if (isset($decoded->timestamp) && (time() - $decoded->timestamp) > ($timeout * 60)) {
             return false;
         }
-        
+
+        log_message('error','validateTimestamp: '.$decoded);
         return $decoded;
     }
 

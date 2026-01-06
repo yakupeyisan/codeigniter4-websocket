@@ -135,17 +135,17 @@ class WebSocketServer implements WebSocketInterface, MessageComponentInterface
         }
 
         // Add default middleware if auth is enabled
-        if ($config->auth) {
-            $this->addMiddleware(new \Yakupeyisan\CodeIgniterWebSocket\Middleware\AuthMiddleware(
-                $config->jwtKey,
-                $config->tokenTimeout
-            ));
-        }
+        // if ($config->auth) {
+        //     $this->addMiddleware(new \Yakupeyisan\CodeIgniterWebSocket\Middleware\AuthMiddleware(
+        //         $config->jwtKey,
+        //         $config->tokenTimeout
+        //     ));
+        // }
 
-        // Add rate limiting middleware
-        $this->addMiddleware(new \Yakupeyisan\CodeIgniterWebSocket\Middleware\RateLimitMiddleware(
-            $this->rateLimiter
-        ));
+        // // Add rate limiting middleware
+        // $this->addMiddleware(new \Yakupeyisan\CodeIgniterWebSocket\Middleware\RateLimitMiddleware(
+        //     $this->rateLimiter
+        // ));
     }
 
     /**
