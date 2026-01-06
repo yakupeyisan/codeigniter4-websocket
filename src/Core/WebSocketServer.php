@@ -356,14 +356,7 @@ class WebSocketServer implements WebSocketInterface, MessageComponentInterface
             $this->processMessage($from, $data);
         };
         
-        $handler = $next;
-        foreach (array_reverse($this->middleware) as $middleware) {
-            $handler = function ($conn, $msg) use ($middleware, $handler) {
-                return $middleware->handle($conn, $msg, $handler);
-            };
-        }
-        
-        $result = $handler($from, $data);
+        $result = $next($from, $data);
         
         if ($result === false) {
             return; // Middleware blocked the message
@@ -379,39 +372,42 @@ class WebSocketServer implements WebSocketInterface, MessageComponentInterface
      */
     protected function processMessage(ConnectionInterface $connection, object $data): void
     {
-        // Support both 'type' and 'messageType' for backward compatibility
-        $type = $data->messageType ?? 'unknown';
-        log_message('info', 'Message type: ' . $type);
-        switch ($type) {
+        // Get message type from messageType or type field
+        $messageType = $data->messageType ?? $data->type ?? null;
+        
+        // If messageType is roomchat but room is not provided, use custom callback
+        if ($messageType === 'roomchat' && empty($data->room)) {
+            $this->handleCustomMessage($connection, $data);
+            return;
+        }
+        
+        // Route to appropriate handler based on messageType
+        switch ($messageType) {
             case 'socket':
                 $this->handleSocket($connection, $data);
                 break;
             case 'chat':
                 $this->handleChat($connection, $data);
                 break;
-                
             case 'roomjoin':
                 $this->handleRoomJoin($connection, $data);
                 break;
-                
             case 'roomleave':
                 $this->handleRoomLeave($connection, $data);
                 break;
-                
             case 'roomchat':
                 $this->handleRoomChat($connection, $data);
                 break;
-                
             case 'typing':
                 $this->handleTyping($connection, $data);
                 break;
-                
             case 'presence':
                 $this->handlePresence($connection, $data);
                 break;
-                
             default:
+                // For unknown message types, use custom callback
                 $this->handleCustomMessage($connection, $data);
+                break;
         }
     }
 
@@ -697,10 +693,14 @@ class WebSocketServer implements WebSocketInterface, MessageComponentInterface
      */
     protected function handleCustomMessage(ConnectionInterface $connection, object $data): void
     {
-        $this->eventDispatcher->dispatch('message.' . ($data->messageType ?? 'unknown'), [
-            'connection' => $connection,
-            'data' => $data
-        ]);
+        if (isset($this->callbacks['custom'])) {
+            log_message('error','Test websocket custom callback');
+            call_user_func($this->callbacks['custom'], $data, $connection);
+        }
+        else{
+            log_message('error','Test websocket custom callback not found');
+        }
+        
     }
 
     /**

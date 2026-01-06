@@ -95,9 +95,6 @@ class WebSocketStart extends BaseCommand
         // Try to load callbacks from Websocket controller if it exists
         if (class_exists('\App\Controllers\Websocket')) {
             $controller = new \App\Controllers\Websocket();
-            if (method_exists($controller, '_auth')) {
-                $server->setCallback('auth', [$controller, '_auth']);
-            }
             if (method_exists($controller, '_open')) {
                 $server->setCallback('connect', [$controller, '_open']);
             }
@@ -107,8 +104,8 @@ class WebSocketStart extends BaseCommand
             if (method_exists($controller, '_close')) {
                 $server->setCallback('close', [$controller, '_close']);
             }
-            if (method_exists($controller, '_roomchat')) {
-                $server->setCallback('roomchat', [$controller, '_roomchat']);
+            if (method_exists($controller, '_custom')) {
+                $server->setCallback('custom', [$controller, '_custom']);
             }
         }
         
