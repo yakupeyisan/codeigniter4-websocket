@@ -70,13 +70,15 @@ class WebSocketStart extends BaseCommand
     {
         $config = config('Websocket');
         
-        // Override config from options
-        if (CLI::getOption('host')) {
-            $config->host = CLI::getOption('host');
+        // Override config from options (support both --port 2525 and --port=2525)
+        $host = $this->getOptionValue('host');
+        if ($host !== null) {
+            $config->host = $host;
         }
         
-        if (CLI::getOption('port')) {
-            $config->port = (int)CLI::getOption('port');
+        $port = $this->getOptionValue('port');
+        if ($port !== null) {
+            $config->port = (int) $port;
         }
         
         if (CLI::getOption('debug')) {
@@ -110,6 +112,27 @@ class WebSocketStart extends BaseCommand
         }
         
         $server->start();
+    }
+
+    /**
+     * Get option value supporting both --name value and --name=value formats.
+     * CodeIgniter CLI stores --port=2525 as key "port=2525", so getOption('port') returns null.
+     *
+     * @param string $name Option name
+     * @return string|null
+     */
+    private function getOptionValue(string $name): ?string
+    {
+        $value = CLI::getOption($name);
+        if ($value !== null && $value !== true) {
+            return (string) $value;
+        }
+        foreach (CLI::getOptions() as $key => $val) {
+            if (strpos($key, $name . '=') === 0) {
+                return substr($key, strlen($name) + 1) ?: null;
+            }
+        }
+        return null;
     }
 }
 
