@@ -195,16 +195,18 @@ class RoomManager implements RoomManagerInterface
     public function removeFromAllRooms(ConnectionInterface $connection): void
     {
         $resourceId = $connection->resourceId;
-        
+
         if (!isset($this->connectionRooms[$resourceId])) {
             return;
         }
-        
+
         $rooms = $this->connectionRooms[$resourceId];
-        
+
         foreach ($rooms as $room) {
             $this->leave($connection, $room);
         }
+
+        unset($this->connectionRooms[$resourceId]);
     }
 
     /**

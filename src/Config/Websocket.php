@@ -117,6 +117,28 @@ class Websocket extends BaseConfig
     public $presenceHeartbeatInterval = 30;
 
     /**
+     * Enable WebSocket protocol Ping/Pong keepalive (RFC 6455).
+     * Server sends Ping frames at pingInterval; clients that don't Pong are closed.
+     *
+     * @var bool
+     */
+    public $pingEnabled = true;
+
+    /**
+     * Ping interval in seconds (how often to send Ping to each client).
+     *
+     * @var int
+     */
+    public $pingInterval = 30;
+
+    /**
+     * Close connection if no pong/activity for this many seconds.
+     *
+     * @var int
+     */
+    public $pingTimeout = 60;
+
+    /**
      * Enable message history
      * 
      * @var bool

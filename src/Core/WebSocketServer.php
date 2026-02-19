@@ -98,6 +98,13 @@ class WebSocketServer implements WebSocketInterface, MessageComponentInterface
     protected $server = null;
 
     /**
+     * Event loop (set in start() for ping timer)
+     *
+     * @var \React\EventLoop\LoopInterface|null
+     */
+    protected $loop = null;
+
+    /**
      * IP connection counts
      * 
      * @var array
@@ -155,15 +162,16 @@ class WebSocketServer implements WebSocketInterface, MessageComponentInterface
      */
     public function start(): void
     {
+        $wsServer = new WsServer($this);
+
         $server = IoServer::factory(
-            new HttpServer(
-                new WsServer($this)
-            ),
+            new HttpServer($wsServer),
             $this->config->port,
             $this->config->host
         );
 
         $this->server = $server;
+        $this->loop = $server->loop;
 
         // Setup timer if enabled
         if ($this->config->timer) {
@@ -204,8 +212,13 @@ class WebSocketServer implements WebSocketInterface, MessageComponentInterface
     }
 
     /**
-     * Set callback
-     * 
+     * Set callback for connect, close, custom, etc.
+     *
+     * Callback signatures (uygulama ile uyumlu):
+     * - connect: callable(ConnectionInterface $connection)  — yeni bağlantı açıldığında, tek argüman
+     * - close:   callable(ConnectionInterface $connection)  — bağlantı kapandığında, tek argüman (remove'dan önce çağrılır)
+     * - custom:  callable(object $data, ConnectionInterface $connection) — mesaj geldiğinde, (data, connection) sırası
+     *
      * @param string $type
      * @param callable $callback
      * @return self
@@ -215,7 +228,7 @@ class WebSocketServer implements WebSocketInterface, MessageComponentInterface
         if (in_array($type, $this->config->callbacks)) {
             $this->callbacks[$type] = $callback;
         }
-        
+
         return $this;
     }
 
@@ -314,7 +327,26 @@ class WebSocketServer implements WebSocketInterface, MessageComponentInterface
         $this->connectionManager->add($connection, [
             'ip' => $ip
         ]);
-        
+
+        // Per-connection ping timer (application-level ping/pong)
+        if (!empty($this->config->pingEnabled) && $this->loop !== null && !empty($this->config->pingInterval)) {
+            $interval = (int) $this->config->pingInterval;
+            $timeout = (int) ($this->config->pingTimeout ?? 60);
+            if ($interval > 0) {
+                $connRef = $connection;
+                $timerId = $this->loop->addPeriodicTimer($interval, function () use ($connRef) {
+                    $this->handlePingTimer($connRef);
+                });
+                $this->connectionManager->setData($connection, [
+                    'pingTimerId' => $timerId,
+                    'lastPongTime' => time(),
+                ]);
+                if ($this->config->debug) {
+                    $this->log('info', "Ping timer started for {$connection->resourceId} (interval: {$interval}s, timeout: {$timeout}s)");
+                }
+            }
+        }
+
         $this->eventDispatcher->dispatch('connect', [
             'connection' => $connection,
             'resourceId' => $connection->resourceId
@@ -339,28 +371,37 @@ class WebSocketServer implements WebSocketInterface, MessageComponentInterface
     public function onMessage(ConnectionInterface $from, $msg)
     {
         $this->connectionManager->updateActivity($from);
-        
+
         // Convert message to string if needed
         $message = is_string($msg) ? $msg : (string)$msg;
-        
+
         // Parse message
         $data = $this->messageHandler->parse($message);
-        
+
         if ($data === null) {
-            $from->send($this->messageHandler->createErrorMessage('Invalid JSON format'));
+            try {
+                $from->send($this->messageHandler->createErrorMessage('Invalid JSON format'));
+            } catch (\Throwable $e) {
+                if ($this->config->debug) {
+                    $this->log('warning', 'onMessage: send error response failed for ' . $from->resourceId . ': ' . $e->getMessage());
+                }
+            }
             return;
         }
-        
-        // Run middleware
-        $next = function ($conn, $msg) use ($from, $data) {
-            $this->processMessage($from, $data);
-        };
-        
-        $result = $next($from, $data);
-        
-        if ($result === false) {
-            return; // Middleware blocked the message
+
+        // Ping/Pong: any valid message = client is alive
+        $connData = $this->connectionManager->getData($from);
+        if ($connData !== null) {
+            $this->connectionManager->setData($from, ['lastPongTime' => time()]);
         }
+
+        // Explicit pong response: update and do not process as app message
+        $messageType = $data->messageType ?? $data->type ?? null;
+        if ($messageType === 'pong') {
+            return;
+        }
+
+        $this->processMessage($from, $data);
     }
 
     /**
@@ -372,39 +413,7 @@ class WebSocketServer implements WebSocketInterface, MessageComponentInterface
      */
     protected function processMessage(ConnectionInterface $connection, object $data): void
     {
-        
         $this->handleCustomMessage($connection, $data);
-        return;
-        // Get message type from messageType or type field
-        $messageType = $data->messageType ?? $data->type ?? null;
-        // Route to appropriate handler based on messageType
-        switch ($messageType) {
-            case 'socket':
-                $this->handleSocket($connection, $data);
-                break;
-            case 'chat':
-                $this->handleChat($connection, $data);
-                break;
-            case 'roomjoin':
-                $this->handleRoomJoin($connection, $data);
-                break;
-            case 'roomleave':
-                $this->handleRoomLeave($connection, $data);
-                break;
-            case 'roomchat':
-                $this->handleRoomChat($connection, $data);
-                break;
-            case 'typing':
-                $this->handleTyping($connection, $data);
-                break;
-            case 'presence':
-                $this->handlePresence($connection, $data);
-                break;
-            default:
-                // For unknown message types, use custom callback
-                $this->handleCustomMessage($connection, $data);
-                break;
-        }
     }
 
     /**
@@ -703,8 +712,15 @@ class WebSocketServer implements WebSocketInterface, MessageComponentInterface
     public function onClose(ConnectionInterface $connection): void
     {
         $connectionData = $this->connectionManager->getData($connection);
-        $ip = $connectionData['ip'] ?? 'unknown';
-        
+        $ip = ($connectionData !== null && isset($connectionData['ip']))
+            ? $connectionData['ip']
+            : ($connection->remoteAddress ?? 'unknown');
+
+        // Cancel ping timer if set
+        if ($connectionData !== null && isset($connectionData['pingTimerId']) && $this->loop !== null) {
+            $this->loop->cancelTimer($connectionData['pingTimerId']);
+        }
+
         // Update IP connection count
         if (isset($this->ipConnections[$ip])) {
             $this->ipConnections[$ip]--;
@@ -720,22 +736,23 @@ class WebSocketServer implements WebSocketInterface, MessageComponentInterface
         
         // Remove from all rooms
         $this->roomManager->removeFromAllRooms($connection);
-        
-        // Remove connection
+
+        // Uygulama close callback'ini ÖNCE çağır (bağlantı henüz manager'dan çıkarılmadı; mesajlaşma yöntemleri kendi listesini temizler)
+        if (isset($this->callbacks['close'])) {
+            call_user_func($this->callbacks['close'], $connection);
+        }
+
+        // Remove connection (callback'ten sonra; uygulama kendi $clients temizliğini yaptı)
         $this->connectionManager->remove($connection);
-        
+
         // Reset rate limit
         $this->rateLimiter->reset($connection->resourceId);
-        
+
         $this->eventDispatcher->dispatch('disconnect', [
             'connection' => $connection,
             'resourceId' => $connection->resourceId
         ]);
-        
-        if (isset($this->callbacks['close'])) {
-            call_user_func($this->callbacks['close'], $connection);
-        }
-        
+
         if ($this->config->debug) {
             $this->log('info', "Connection closed: {$connection->resourceId}");
         }
@@ -773,6 +790,51 @@ class WebSocketServer implements WebSocketInterface, MessageComponentInterface
     {
         if (isset($this->callbacks['citimer'])) {
             call_user_func($this->callbacks['citimer'], date('Y-m-d H:i:s'));
+        }
+    }
+
+    /**
+     * Ping timer callback: send ping or close if no pong within timeout.
+     *
+     * @param ConnectionInterface $connection
+     * @return void
+     */
+    protected function handlePingTimer(ConnectionInterface $connection): void
+    {
+        $data = $this->connectionManager->getData($connection);
+        if ($data === null) {
+            return;
+        }
+        $lastPongTime = $data['lastPongTime'] ?? 0;
+        $timeout = (int) ($this->config->pingTimeout ?? 60);
+        if ($timeout > 0 && (time() - $lastPongTime) > $timeout) {
+            if ($this->config->debug) {
+                $this->log('info', "Ping timeout for connection {$connection->resourceId}, closing.");
+            }
+            try {
+                $disconnetMessage = [
+                    'type' => 'connection_closed',
+                    'resourceId' => $connection->resourceId,
+                    'message' => 'Connection closed by ping timeout'
+                ];
+                $connection->send(json_encode($disconnetMessage, JSON_UNESCAPED_UNICODE));
+            } catch (\Throwable $e) {
+                if ($this->config->debug) {
+                    $this->log('warning', "Ping timeout: send before close failed for {$connection->resourceId}: " . $e->getMessage());
+                }
+            }
+            $connection->close();
+            return;
+        }
+        try {
+            $connection->send($this->messageHandler->format([
+                'Type' => 'ping',
+                'Time' => time(),
+            ]));
+        } catch (\Throwable $e) {
+            if ($this->config->debug) {
+                $this->log('warning', "Ping send failed for {$connection->resourceId}: " . $e->getMessage());
+            }
         }
     }
 
