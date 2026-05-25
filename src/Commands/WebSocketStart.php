@@ -84,12 +84,13 @@ class WebSocketStart extends BaseCommand
         if (CLI::getOption('debug')) {
             $config->debug = true;
         }
-        
-        CLI::write('Starting WebSocket server...', 'green');
-        CLI::write("Host: {$config->host}", 'yellow');
-        CLI::write("Port: {$config->port}", 'yellow');
-        CLI::write('Press Ctrl+C to stop the server', 'yellow');
-        CLI::newLine();
+
+        // Windows / arka plan: STDOUT geçersizken fwrite errno=22 → ErrorException zinciri
+        self::safeCliWrite('Starting WebSocket server...', 'green');
+        self::safeCliWrite("Host: {$config->host}", 'yellow');
+        self::safeCliWrite("Port: {$config->port}", 'yellow');
+        self::safeCliWrite('Press Ctrl+C to stop the server', 'yellow');
+        self::safeCliNewLine();
         
         // Use service to get WebSocket server instance
         $server = Services::websocket($config, false);
@@ -133,6 +134,33 @@ class WebSocketStart extends BaseCommand
             }
         }
         return null;
+    }
+
+    /**
+     * STDOUT kapalı veya geçersiz olduğunda (errno 22) CLI::write patlamasın.
+     */
+    private static function safeCliWrite(string $text = '', ?string $foreground = null, ?string $background = null): void
+    {
+        try {
+            if ($foreground !== null && $background !== null) {
+                @CLI::write($text, $foreground, $background);
+            } elseif ($foreground !== null) {
+                @CLI::write($text, $foreground);
+            } else {
+                @CLI::write($text);
+            }
+        } catch (\Throwable) {
+            log_message('info', '[websocket:start] ' . $text);
+        }
+    }
+
+    private static function safeCliNewLine(): void
+    {
+        try {
+            @CLI::newLine();
+        } catch (\Throwable) {
+            // yoksay
+        }
     }
 }
 
